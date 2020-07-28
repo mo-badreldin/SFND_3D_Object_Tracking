@@ -5,6 +5,8 @@ add_definitions(-std=c++11)
 set(CXX_FLAGS "-Wall")
 set(CMAKE_CXX_FLAGS, "${CXX_FLAGS}")
 
+SET(OpenCV_DIR ~/workspace/OpenCv_Install/installation/OpenCV-4.1.0/lib/cmake/opencv4)
+
 project(camera_fusion)
 
 find_package(OpenCV 4.1 REQUIRED)

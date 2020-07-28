@@ -29,8 +29,8 @@ void clusterLidarWithROI(std::vector<BoundingBox> &boundingBoxes, std::vector<Li
         // project Lidar point into camera
         Y = P_rect_xx * R_rect_xx * RT * X;
         cv::Point pt;
-        pt.x = Y.at<double>(0, 0) / Y.at<double>(0, 2); // pixel coordinates
-        pt.y = Y.at<double>(1, 0) / Y.at<double>(0, 2);
+        pt.x = Y.at<double>(0, 0) / Y.at<double>(2, 0); // pixel coordinates
+        pt.y = Y.at<double>(1, 0) / Y.at<double>(2, 0);
 
         vector<vector<BoundingBox>::iterator> enclosingBoxes; // pointers to all bounding boxes which enclose the current Lidar point
         for (vector<BoundingBox>::iterator it2 = boundingBoxes.begin(); it2 != boundingBoxes.end(); ++it2)
@@ -155,4 +155,154 @@ void computeTTCLidar(std::vector<LidarPoint> &lidarPointsPrev,
 void matchBoundingBoxes(std::vector<cv::DMatch> &matches, std::map<int, int> &bbBestMatches, DataFrame &prevFrame, DataFrame &currFrame)
 {
     // ...
+     int count_array[prevFrame.boundingBoxes.size()][currFrame.boundingBoxes.size()] = {};
+
+     cout << "Bounding Boxes Size current: " << currFrame.boundingBoxes.size() << " Bounding Boxes Size Prev: " << prevFrame.boundingBoxes.size() << endl;
+
+     for(auto keyPt_match : matches)
+     {
+         cv::KeyPoint currKeyPt = currFrame.keypoints[keyPt_match.trainIdx];
+         cv::KeyPoint prevKeyPt = prevFrame.keypoints[keyPt_match.queryIdx];
+
+         vector<int> currBoundingBoxIDs;
+         for(auto currImgBoundingBox : currFrame.boundingBoxes)
+         {
+             if(currImgBoundingBox.roi.contains(currKeyPt.pt))
+             {
+                 currBoundingBoxIDs.push_back(currImgBoundingBox.boxID);
+             }
+         }
+
+         vector<int> prevBoundingBoxIDs;
+         for(auto prevImgBoundingBox : prevFrame.boundingBoxes)
+         {
+             if(prevImgBoundingBox.roi.contains(prevKeyPt.pt))
+             {
+                 prevBoundingBoxIDs.push_back(prevImgBoundingBox.boxID);
+             }
+         }
+
+         if(currBoundingBoxIDs.size() == 1 && prevBoundingBoxIDs.size() == 1)
+         {
+             count_array[prevBoundingBoxIDs[0]][currBoundingBoxIDs[0]] ++;
+         }
+     }
+
+
+     for(int prev_idx = 0; prev_idx<prevFrame.boundingBoxes.size();prev_idx++)
+     {
+         auto array_itr = count_array[prev_idx];
+         bbBestMatches[prev_idx] =  distance(array_itr,
+                                             max_element(array_itr,array_itr + currFrame.boundingBoxes.size()));
+         //Printing code for debugging
+//         cout << "Prev BB Idx: " << prev_idx << endl;
+//         for(int cur_idx = 0; cur_idx<currFrame.boundingBoxes.size();cur_idx++)
+//         {
+//             cout << "Current BB Idx: " << cur_idx << "Current BB Value: " << count_array[prev_idx][cur_idx];
+//             cout << endl;
+//         }
+//         cout << endl;
+     }
+
+     std::cout << "Before FIlter: \n" ;
+     for(auto itr = bbBestMatches.begin(); itr!=bbBestMatches.end();itr++)
+     {
+         std::cout << (*itr).first <<"\t" << (*itr).second << "\n";
+     }
+
+     auto primary_itr = bbBestMatches.begin();
+     while(primary_itr != bbBestMatches.end())
+     {
+         auto secondary_itr = next(primary_itr) ;
+         while (secondary_itr != bbBestMatches.end())
+         {
+             if(primary_itr->second == secondary_itr->second)
+             {
+                 if(count_array[primary_itr->first][primary_itr->second] >=
+                 count_array[secondary_itr->first][secondary_itr->second])
+                 {
+                     secondary_itr = bbBestMatches.erase(secondary_itr);
+                     continue;
+                 }
+                 else
+                 {
+                     primary_itr = bbBestMatches.erase(primary_itr);
+                     secondary_itr = next(primary_itr) ;
+                     continue;
+                 }
+             }
+             else
+             {
+                 secondary_itr++;
+             }
+         }
+
+         primary_itr++;
+     }
+
+     std::cout << "After FIlter: \n" ;
+     for(auto newitr = bbBestMatches.begin(); newitr!=bbBestMatches.end();newitr++)
+     {
+         std::cout << (*newitr).first <<"\t" << (*newitr).second << "\n";
+     }
 }
+
+
+#if 0
+//just for testing and comparing
+void matchBoundingBoxes2(std::vector<cv::DMatch> &matches, std::map<int, int> &bbBestMatches, DataFrame &prevFrame, DataFrame &currFrame)
+{
+    // use the matched keypoints to identify the matching between bounding boxes-
+    // first, associate the keypoints to detected bounding boxes and then check which bounding boxes are relevant.
+
+    // loop through all keypoint matches and assign them the bounding boxes they belong to.
+
+    cv::Mat bbMatchTable = cv::Mat::zeros(prevFrame.boundingBoxes.size(), currFrame.boundingBoxes.size(), CV_32S);
+
+    for (const auto &match : matches)
+    {
+        const cv::KeyPoint &currKpt = currFrame.keypoints[ match.trainIdx ];
+        const cv::KeyPoint &prevKpt = prevFrame.keypoints[ match.queryIdx ];
+
+        for (const BoundingBox& prevBoundingBox : prevFrame.boundingBoxes)
+        {
+            for (const BoundingBox& currBoundingBox : currFrame.boundingBoxes)
+            {
+                if (prevBoundingBox.roi.contains(prevKpt.pt) && currBoundingBox.roi.contains(currKpt.pt))
+                {
+                    bbMatchTable.at<int>(prevBoundingBox.boxID, currBoundingBox.boxID)++;
+                }
+            }
+        }
+    }
+
+    // loop through the prev frame counts
+    for (int i = 0; i < bbMatchTable.rows; i++)
+    {
+        int bestMatchCounts = 0;
+        int bestMatchIndex = -1;
+
+        // loop through the curr frame counts
+        for (int j = 0; j < bbMatchTable.cols; j++)
+        {
+            if (bbMatchTable.at<int>(i, j) > 0 && bbMatchTable.at<int>(i, j) > bestMatchCounts)
+            {
+                bestMatchCounts = bbMatchTable.at<int>(i, j);
+                bestMatchIndex = j;
+            }
+        }
+
+        if (bestMatchIndex != -1)
+        {
+            bbBestMatches.emplace(i, bestMatchIndex);
+        }
+    }
+
+    std::cout << "MEthod 2: \n" ;
+    for(auto newitr = bbBestMatches.begin(); newitr!=bbBestMatches.end();newitr++)
+    {
+        std::cout << (*newitr).first <<"\t" << (*newitr).second << "\n";
+    }
+}
+#endif
+
