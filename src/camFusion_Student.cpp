@@ -131,9 +131,52 @@ void show3DObjects(std::vector<BoundingBox> &boundingBoxes, cv::Size worldSize, 
 
 
 // associate a given bounding box with the keypoints it contains
-void clusterKptMatchesWithROI(BoundingBox &boundingBox, std::vector<cv::KeyPoint> &kptsPrev, std::vector<cv::KeyPoint> &kptsCurr, std::vector<cv::DMatch> &kptMatches)
+void clusterKptMatchesWithROI(BoundingBox &prevboundingBox, BoundingBox &currboundingBox, std::vector<cv::KeyPoint> &kptsPrev, std::vector<cv::KeyPoint> &kptsCurr, std::vector<cv::DMatch> &kptMatches)
 {
     // ...
+    double away_from_mean_perc = 50.0;
+    double mean = 0;
+    double num_matches = 0;
+    std::vector<cv::DMatch> tempkptMatches;
+    for(auto keyPt_match : kptMatches)
+    {
+        cv::KeyPoint currKeyPt = kptsCurr[keyPt_match.trainIdx];
+        cv::KeyPoint prevKeyPt = kptsPrev[keyPt_match.queryIdx];
+
+
+        if(currboundingBox.roi.contains(currKeyPt.pt)
+                && prevboundingBox.roi.contains(prevKeyPt.pt))
+        {
+            // match provide two key points (current and previous keypoint) which both lie
+            // in the two previously matched Boudning boxes of current and previous frame
+            tempkptMatches.push_back(keyPt_match);
+
+            mean+=keyPt_match.distance;
+            num_matches++;
+        }
+    }
+
+    mean =  mean / num_matches;
+    double max_distance_threshold = (away_from_mean_perc/100) * mean;
+	
+    auto itr = tempkptMatches.begin();
+    while(itr != tempkptMatches.end())
+    {
+        if(abs((*itr).distance - mean) > max_distance_threshold)
+        {
+            //the difference bet distance and mean is greater than 50 percent of mean value
+            // considered very far and can be removed
+            // removes 25% around 50 keypts
+            // removes 50% around 30 keypts
+            itr = tempkptMatches.erase(itr);
+        }
+        else
+        {
+            itr++;
+        }
+    }
+
+    currboundingBox.kptMatches = tempkptMatches;
 }
 
 
@@ -149,6 +192,68 @@ void computeTTCLidar(std::vector<LidarPoint> &lidarPointsPrev,
                      std::vector<LidarPoint> &lidarPointsCurr, double frameRate, double &TTC)
 {
     // ...
+    double minXPrev = 1e9, minXCurr = 1e9;
+    sort(lidarPointsPrev.begin(),lidarPointsPrev.end(),[](const LidarPoint &first, const LidarPoint &second)
+         {
+
+        return first.x < second.x;
+         });
+
+    sort(lidarPointsCurr.begin(),lidarPointsCurr.end(),[](const LidarPoint &first, const LidarPoint &second)
+             {
+
+            return first.x < second.x;
+             });
+
+    double max_diff_threshold = 1.0;
+    int min_num_consecutive_pts = 50;
+    int counter = 0;
+    double actual_prevmin = lidarPointsPrev.begin()->x;
+    for(auto itr = lidarPointsPrev.begin(); itr!=lidarPointsPrev.end();itr++)
+    {
+        double diff = ((*next(itr)).x -(*itr).x) * 100;
+        if(diff <= max_diff_threshold)
+        {
+            counter++;
+        }
+        else
+        {
+            counter = 0;
+            actual_prevmin = (*next(itr)).x;
+        }
+
+        if(counter > min_num_consecutive_pts)
+        {
+            // found 50 consecutve points
+            minXPrev =  actual_prevmin;
+            break;
+        }
+    }
+
+    counter = 0;
+    double actual_currmin = lidarPointsCurr.begin()->x;
+    for(auto itr = lidarPointsCurr.begin(); itr!=lidarPointsCurr.end();itr++)
+    {
+        double diff = ((*next(itr)).x -(*itr).x) * 100;
+        if(diff <= max_diff_threshold)
+        {
+            counter++;
+        }
+        else
+        {
+            counter = 0;
+            actual_currmin = (*next(itr)).x;
+        }
+
+        if(counter > min_num_consecutive_pts)
+        {
+            // found 50 consecutve points
+            minXCurr =  actual_currmin;
+            break;
+        }
+    }
+
+    TTC = minXCurr * (1/frameRate) / (minXPrev - minXCurr);
 }
 
 
@@ -157,12 +262,12 @@ void matchBoundingBoxes(std::vector<cv::DMatch> &matches, std::map<int, int> &bb
     // ...
      int count_array[prevFrame.boundingBoxes.size()][currFrame.boundingBoxes.size()] = {};
 
-     cout << "Bounding Boxes Size current: " << currFrame.boundingBoxes.size() << " Bounding Boxes Size Prev: " << prevFrame.boundingBoxes.size() << endl;
 
-     for(auto keyPt_match : matches)
+     auto itr = matches.begin();
+     while(itr != matches.end())
      {
-         cv::KeyPoint currKeyPt = currFrame.keypoints[keyPt_match.trainIdx];
-         cv::KeyPoint prevKeyPt = prevFrame.keypoints[keyPt_match.queryIdx];
+         cv::KeyPoint currKeyPt = currFrame.keypoints[(*itr).trainIdx];
+         cv::KeyPoint prevKeyPt = prevFrame.keypoints[(*itr).queryIdx];
 
          vector<int> currBoundingBoxIDs;
          for(auto currImgBoundingBox : currFrame.boundingBoxes)
@@ -185,6 +290,14 @@ void matchBoundingBoxes(std::vector<cv::DMatch> &matches, std::map<int, int> &bb
          if(currBoundingBoxIDs.size() == 1 && prevBoundingBoxIDs.size() == 1)
          {
              count_array[prevBoundingBoxIDs[0]][currBoundingBoxIDs[0]] ++;
+             itr++;
+         }
+         else
+         {
+             //Either of the two keypoints was not located  in a Boundingbox (size ==0)
+             //Either of the two keypoints was located in more than one Boundingbox size > 1
+             //Remove this keypoint match for more robust detection
+             itr = matches.erase(itr);
          }
      }
 
@@ -194,22 +307,9 @@ void matchBoundingBoxes(std::vector<cv::DMatch> &matches, std::map<int, int> &bb
          auto array_itr = count_array[prev_idx];
          bbBestMatches[prev_idx] =  distance(array_itr,
                                              max_element(array_itr,array_itr + currFrame.boundingBoxes.size()));
-         //Printing code for debugging
-//         cout << "Prev BB Idx: " << prev_idx << endl;
-//         for(int cur_idx = 0; cur_idx<currFrame.boundingBoxes.size();cur_idx++)
-//         {
-//             cout << "Current BB Idx: " << cur_idx << "Current BB Value: " << count_array[prev_idx][cur_idx];
-//             cout << endl;
-//         }
-//         cout << endl;
      }
 
-     std::cout << "Before FIlter: \n" ;
-     for(auto itr = bbBestMatches.begin(); itr!=bbBestMatches.end();itr++)
-     {
-         std::cout << (*itr).first <<"\t" << (*itr).second << "\n";
-     }
-
+     // Filter to remove non-unique matches. After this loop each previous BB match to only one BB or none
      auto primary_itr = bbBestMatches.begin();
      while(primary_itr != bbBestMatches.end())
      {
@@ -240,69 +340,4 @@ void matchBoundingBoxes(std::vector<cv::DMatch> &matches, std::map<int, int> &bb
          primary_itr++;
      }
 
-     std::cout << "After FIlter: \n" ;
-     for(auto newitr = bbBestMatches.begin(); newitr!=bbBestMatches.end();newitr++)
-     {
-         std::cout << (*newitr).first <<"\t" << (*newitr).second << "\n";
-     }
 }
-
-
-#if 0
-//just for testing and comparing
-void matchBoundingBoxes2(std::vector<cv::DMatch> &matches, std::map<int, int> &bbBestMatches, DataFrame &prevFrame, DataFrame &currFrame)
-{
-    // use the matched keypoints to identify the matching between bounding boxes-
-    // first, associate the keypoints to detected bounding boxes and then check which bounding boxes are relevant.
-
-    // loop through all keypoint matches and assign them the bounding boxes they belong to.
-
-    cv::Mat bbMatchTable = cv::Mat::zeros(prevFrame.boundingBoxes.size(), currFrame.boundingBoxes.size(), CV_32S);
-
-    for (const auto &match : matches)
-    {
-        const cv::KeyPoint &currKpt = currFrame.keypoints[ match.trainIdx ];
-        const cv::KeyPoint &prevKpt = prevFrame.keypoints[ match.queryIdx ];
-
-        for (const BoundingBox& prevBoundingBox : prevFrame.boundingBoxes)
-        {
-            for (const BoundingBox& currBoundingBox : currFrame.boundingBoxes)
-            {
-                if (prevBoundingBox.roi.contains(prevKpt.pt) && currBoundingBox.roi.contains(currKpt.pt))
-                {
-                    bbMatchTable.at<int>(prevBoundingBox.boxID, currBoundingBox.boxID)++;
-                }
-            }
-        }
-    }
-
-    // loop through the prev frame counts
-    for (int i = 0; i < bbMatchTable.rows; i++)
-    {
-        int bestMatchCounts = 0;
-        int bestMatchIndex = -1;
-
-        // loop through the curr frame counts
-        for (int j = 0; j < bbMatchTable.cols; j++)
-        {
-            if (bbMatchTable.at<int>(i, j) > 0 && bbMatchTable.at<int>(i, j) > bestMatchCounts)
-            {
-                bestMatchCounts = bbMatchTable.at<int>(i, j);
-                bestMatchIndex = j;
-            }
-        }
-
-        if (bestMatchIndex != -1)
-        {
-            bbBestMatches.emplace(i, bestMatchIndex);
-        }
-    }
-
-    std::cout << "MEthod 2: \n" ;
-    for(auto newitr = bbBestMatches.begin(); newitr!=bbBestMatches.end();newitr++)
-    {
-        std::cout << (*newitr).first <<"\t" << (*newitr).second << "\n";
-    }
-}
-#endif
-
