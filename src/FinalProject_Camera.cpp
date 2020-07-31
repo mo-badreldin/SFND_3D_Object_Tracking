@@ -7,6 +7,7 @@
 #include <vector>
 #include <cmath>
 #include <limits>
+#include <numeric>
 #include <opencv2/core.hpp>
 #include <opencv2/highgui/highgui.hpp>
 #include <opencv2/imgproc/imgproc.hpp>
@@ -23,7 +24,7 @@
 using namespace std;
 
 /* MAIN PROGRAM */
-int main(int argc, const char *argv[])
+void mainProgram(string detectorType,string descriptorType,string matcherType,string descriptorFamily,string selectorType)
 {
     /* INIT VARIABLES AND DATA STRUCTURES */
 
@@ -76,8 +77,17 @@ int main(int argc, const char *argv[])
 
     /* MAIN LOOP OVER ALL IMAGES */
 
+    cout << detectorType + "-" << descriptorType << endl;
+
+
+    double ttc_cam_avg = 0;
+    double ttc_lidar_avg = 0;
+    double min_abs_diff_ttc = 0;
+    double max_abs_diff_ttc = 0;
+    std::vector<double> abs_diff_vec;
     for (size_t imgIndex = 0; imgIndex <= imgEndIndex - imgStartIndex; imgIndex+=imgStepWidth)
     {
+
         /* LOAD IMAGE INTO BUFFER */
 
         // assemble filenames for current index
@@ -161,7 +171,6 @@ int main(int argc, const char *argv[])
 
         // extract 2D keypoints from current image
         vector<cv::KeyPoint> keypoints; // create empty feature list for current image
-        string detectorType = "SHITOMASI";
 
         if (detectorType.compare("SHITOMASI") == 0)
         {
@@ -199,7 +208,6 @@ int main(int argc, const char *argv[])
         /* EXTRACT KEYPOINT DESCRIPTORS */
 
         cv::Mat descriptors;
-        string descriptorType = "BRISK"; // BRISK, BRIEF, ORB, FREAK, AKAZE, SIFT
         descKeypoints((dataBuffer.end() - 1)->keypoints, (dataBuffer.end() - 1)->cameraImg, descriptors, descriptorType);
 
         // push descriptors for current frame to end of data buffer
@@ -208,19 +216,17 @@ int main(int argc, const char *argv[])
 //        cout << "#6 : EXTRACT DESCRIPTORS done" << endl;
 
 
+
         if (dataBuffer.size() > 1) // wait until at least two images have been processed
         {
 
             /* MATCH KEYPOINT DESCRIPTORS */
 
             vector<cv::DMatch> matches;
-            string matcherType = "MAT_BF";        // MAT_BF, MAT_FLANN
-            string descriptorType = "DES_BINARY"; // DES_BINARY, DES_HOG
-            string selectorType = "SEL_NN";       // SEL_NN, SEL_KNN
 
             matchDescriptors((dataBuffer.end() - 2)->keypoints, (dataBuffer.end() - 1)->keypoints,
                              (dataBuffer.end() - 2)->descriptors, (dataBuffer.end() - 1)->descriptors,
-                             matches, descriptorType, matcherType, selectorType);
+                             matches, descriptorFamily, matcherType, selectorType);
 
             // store matches in current data frame
             (dataBuffer.end() - 1)->kptMatches = matches;
@@ -279,6 +285,7 @@ int main(int argc, const char *argv[])
 //                    showLidarTopview(currBB->lidarPoints, cv::Size(10.0, 25.0), cv::Size(1000, 2000));
 
                     computeTTCLidar(prevBB->lidarPoints, currBB->lidarPoints, sensorFrameRate, ttcLidar);
+                    ttc_lidar_avg += ttcLidar;
                     //// EOF STUDENT ASSIGNMENT
 
                     //// STUDENT ASSIGNMENT
@@ -292,9 +299,27 @@ int main(int argc, const char *argv[])
                     * 3) Keypoint matches which not very far away from mean distance => (clusterKptMatchesWithROI)
                     * */
                     computeTTCCamera((dataBuffer.end() - 2)->keypoints, (dataBuffer.end() - 1)->keypoints, currBB->kptMatches, sensorFrameRate, ttcCamera);
+                    ttc_cam_avg += ttcCamera;
                     //// EOF STUDENT ASSIGNMENT
+                    double ttc_abs_diff = abs(ttcCamera-ttcLidar);
+                    abs_diff_vec.push_back(ttc_abs_diff);
+                    if(imgIndex < imgEndIndex - imgStartIndex)
+                    {
+                        cout << imgIndex-1 << "," << imgIndex << "," <<  ttcLidar << "," << ttcCamera << "," << ttc_abs_diff << endl;
+                        showLidarTopview(currBB->lidarPoints, cv::Size(10.0, 25.0), cv::Size(1000, 2000));
+                    }
+                    else
+                    {
+                        auto result = minmax_element(abs_diff_vec.begin(),abs_diff_vec.end());
+                        double abs_diff_average = std::accumulate(abs_diff_vec.begin(), abs_diff_vec.end(), 0.0) / abs_diff_vec.size();
+                        cout << imgIndex-1 << "," << imgIndex << "," <<  ttcLidar << "," << ttcCamera << "," << ttc_abs_diff
+                                << "," << ttc_lidar_avg / imgIndex << "," << ttc_cam_avg / imgIndex
+                                << "," << *result.first << "," << *result.second << ","<< abs_diff_average << endl;
+                        showLidarTopview(currBB->lidarPoints, cv::Size(10.0, 25.0), cv::Size(1000, 2000));
+                    }
 
-                    bVis = true;
+
+                    bVis = false;
                     if (bVis)
                     {
                         cv::Mat visImg = (dataBuffer.end() - 1)->cameraImg.clone();
@@ -308,7 +333,7 @@ int main(int argc, const char *argv[])
                         string windowName = "Final Results : TTC";
                         cv::namedWindow(windowName, 4);
                         cv::imshow(windowName, visImg);
-                        cout << "Press key to continue to next frame" << endl;
+//                        cout << "Press key to continue to next frame" << endl;
                         cv::waitKey(0);
                     }
                     bVis = false;
@@ -319,6 +344,52 @@ int main(int argc, const char *argv[])
         }
 
     } // eof loop over all images
+}
+
+int main(int argc, const char *argv[])
+{
+    vector<string> detectors {"SHITOMASI","HARRIS","SIFT","FAST","BRISK","ORB","AKAZE"};
+    vector<string> descriptors {"BRISK","BRIEF","ORB","FREAK","AKAZE","SIFT"};
+
+    string matcherType = "MAT_BF";
+    string descriptorFamily = "DES_BINARY";
+    string selectorType = "SEL_KNN";
+
+//    cout << "Detector Type,descriptorType,matcherType,descriptorFamily,selectorType"<< endl;
+    cout << "PrevImgIdx,CurrImgIdx,TTC_Lidar,TTC_Camera,TTC_Abs_Diff,TTC_Lidar_Avg,TTC_Cam_Avg,TTC_Min_Diff,TTC_Max_Diff,TTC_Avg_Diff" <<endl;
+    for(auto detector: detectors)
+    {
+        for(auto descriptor : descriptors)
+        {
+            if(descriptor.compare("SIFT") == 0)
+            {
+                descriptorFamily = "DES_HOG";
+            }
+            else
+            {
+                descriptorFamily = "DES_BINARY";
+            }
+
+            if(descriptor.compare("AKAZE") == 0)
+            {
+                if(detector.compare("AKAZE") != 0)
+                {
+                    continue;
+                }
+            }
+
+            if(descriptor.compare("ORB") == 0)
+            {
+                if(detector.compare("SIFT") == 0)
+                {
+                    continue;
+                }
+            }
+            mainProgram(detector,descriptor,matcherType,descriptorFamily,selectorType);
+        }
+    }
+
+//    mainProgram("FAST","ORB",matcherType,descriptorFamily,selectorType);
 
     return 0;
 }

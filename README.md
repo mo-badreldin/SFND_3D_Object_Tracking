@@ -33,3 +33,49 @@ In this final project, you will implement the missing parts in the schematic. To
 2. Make a build directory in the top level project directory: `mkdir build && cd build`
 3. Compile: `cmake .. && make`
 4. Run it: `./3D_object_tracking`.
+
+## Final Project Report
+
+* FP.1 Match 3D Objects
+
+Create a 2D with rows(size of previous frame bounding boxes) and cols (size of current frame bounding boxes) to count number of bounding box matches. Looping on Keypts matches, for each match determine Keypt in current frame, and Keypt in previous frame. Loop over Boundingboxes to find out which BB include the keypt for both current and previous frame. When Two BB are matched, then increment the coressponding array position based on previous frame BB ID (row) and current frame BB ID (col). a map is used to store the BB best matches. Each BB ID from Prev frame is stored in the map with the BB from current frame with highest number of matches. After storing the map, one more loop is run over the map to filter our non unique matches to make sure each BB from previous frame is matched to one and only one BB from current frame.
+
+* FP.2 Compute Lidar-based TTC
+
+The input lidar point vectors for the current and previous BB are sorted in ascending order based on the x value of the lidar point. Since outliers are mostly points with a larger than expected distance from the inlier points, therefore a simple algorithm was implemented to avoid outliers. The minimum X point is considered to the calculation only when there is no suddne jump in X value (max 1 cm diff) between the current minimum point and the next point in the ascendingly sorted vector. To make sure we dont have more than one outlier points. For extra care a threshold of number of consecutive points is defined to accept only a minimum point when the following number of consecutive points dont have sudden jumps. The accepted minimum points for both previous and current frame lidar points are used to calcualte TTC.
+
+
+* FP.3 Associate Keypoint Correspondences with Bounding Boxes
+ 
+Looping on Keypts matches, for each match determine Keypt in current frame, and Keypt in previous frame. When both points are contained in the current and previous matched BB, then the match is added to temporary vector, the mean distance between the match is accumulated to later calculate the mean. For filtering of keypt outliers the mean is used to exclude far away keypts. A max_distance_threshold was defined to control the distance from mean used to exclude outlier poitns Finally, the filtered temp vector is assigned to the keypt matches of the current BB.
+
+
+* FP.4 Compute Camera-based TTC
+
+The keypt matches from point FP.3 (keypts that lie inside the BB and outliers excluded) are used to fetch the keypts that will be used in computing the TTC. The keypts are used to calculate the distance ration between all keypts fetched from the keypt matches. In order to avoid faulty measurements, the mean of the distance ratios is used for the TTC calcaulation.
+
+* FP.5 Performance Evaluation 1
+
+In current frames 3, 4, 6 and 8, the TTC increased suddenly. The increase in TTC could come based on the fact that ego vehicle was faster at that instance than the forward vehicle or could come from outliers causing disturbance in the measurement. In 3,4 the increase seems gradual and the top view of the lidar point cloud for frame 3 and 4 doesnt show significant outlier points. Then it would be more possible that the ego vehicle was faster. In 6,8 the increase seems abrupt and with larger difference than at 3,4 frames. Also showing the lidar top view, it seems there are several outlier points ob target vehicle which might explain the suddent change in the TTC value. However, the filtering is showing more logical values in terms of change of TTC than without filter (just using minimum). Without filter the changes are huge and difficult to explain.
+
+<img src="./images/test/Frame8.png"/>
+
+* FP.6 Performance Evaluation 2
+
+As in Midterm project, a nested loop of all possible detector/descriptor combination is used to run the platform with all possible combination and report the result. All the result and measures:
+1. TTC_Lidar calcaulation per frame
+2. TTC_Camera calcaulation per frame
+3. TTC_Abs_Diff, the absolute difference between both ttc values per frame
+4. TTC_Lidar_Avg
+5. TTC_Cam_Avg	
+6. TTC_Min_Diff
+7. TTC_Max_Diff
+8. TTC_Avg_Diff
+
+are all recorded in an excel sheet and graphs were plotted to compare behavior of different camera based detectors vs lidar based detector. 
+
+<img src="./images/test/SIFT-LIDAR.png"/>
+<img src="./images/test/FAST-LIDAR.png"/>
+
+The Harris and the ORB detectors were excluded as they provided nan values. The SIFT-FREAK as well as the FAST-ORB detector/descriptor combinations provided close results to the Lidar based detector. The FAST-BRISK and FAST-BRIEF also provided close results and have fast runtime which is huge advantage in this application.Since the ground truth is not available, then it would make sense to choose detectors that have lower runtime, which minimize the min and max and avg difference with lidar detector
+
