@@ -79,3 +79,4 @@ are all recorded in an excel sheet and graphs were plotted to compare behavior o
 
 The Harris and the ORB detectors were excluded as they provided nan values. The SIFT-FREAK as well as the FAST-ORB detector/descriptor combinations provided close results to the Lidar based detector. The FAST-BRISK and FAST-BRIEF also provided close results and have fast runtime which is huge advantage in this application.Since the ground truth is not available, then it would make sense to choose detectors that have lower runtime, which minimize the min and max and avg difference with lidar detector
 
+Test resutls stored under ./dat/FP_Results.xlsx
